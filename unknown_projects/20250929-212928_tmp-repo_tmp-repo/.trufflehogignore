@@ -1,0 +1,10 @@
+# Skip local caches, vaults, sd mirrors
+**/HERMES_VAULT/**
+**/HERMES_OFFLOAD/**
+**/HERMES_VALHALL/**
+/storage/**
+/sdcard/**
+**/.cache/**
+**/tmp/**
+**/*.redacted
+**/*.summary.json
