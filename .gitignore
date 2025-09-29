@@ -1,0 +1,41 @@
+# Node / Python / general
+node_modules/
+venv/
+*.pyc
+__pycache__/
+
+# Editor / OS
+.DS_Store
+thumbs.db
+*.swp
+
+# Termux / personal
+.hermes/
+.hermes_*/
+.masterpack/
+.masterpack_*/
+*.bak
+*.backup*/
+*.orig
+
+# SSH + secrets
+.ssh/
+*.pem
+*.key
+
+# Caches / runtime
+.cache/
+tmp/
+tmp*/
+.vscode/
+.vscode-server/
+.vscode-*
+.idea/
+
+# Beskytt mot å legge til systemkataloger ved feil
+/.android/
+/var/
+/data/
+/proc/
+/sys/
+/dev/
