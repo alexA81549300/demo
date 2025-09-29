@@ -1,1 +1,2 @@
-B
+#!/bin/sh
+echo test
