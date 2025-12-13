@@ -1,0 +1,17 @@
+name: guard-imports
+on:
+  push:
+    paths:
+      - '!unknown_projects/**/.github/**'
+      - '!unknown_tools/**/.github/**'
+      - '**'
+  pull_request:
+    paths:
+      - '!unknown_projects/**/.github/**'
+      - '!unknown_tools/**/.github/**'
+      - '**'
+jobs:
+  note:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Imports i unknown_* har fått sine egne .github/ slått av i samle-repo."

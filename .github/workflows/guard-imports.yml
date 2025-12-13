@@ -1,15 +1,6 @@
 name: guard-imports
 on:
-  push:
-    paths:
-      - '!unknown_projects/**/.github/**'
-      - '!unknown_tools/**/.github/**'
-      - '**'
-  pull_request:
-    paths:
-      - '!unknown_projects/**/.github/**'
-      - '!unknown_tools/**/.github/**'
-      - '**'
+  workflow_dispatch:
 jobs:
   note:
     runs-on: ubuntu-latest

@@ -1,6 +1,9 @@
 name: guard
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 jobs:
   block-direct-push:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
