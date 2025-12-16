@@ -1,2 +1,1 @@
-#!/bin/sh
-echo test
+/data/data/com.termux/files/home/gh_fleet/demo/unknown_projects/20250929-212928_001_001/test.sh
