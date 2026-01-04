@@ -1,0 +1,46 @@
+name: Hermes Repo Audit
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Secrets scanning (repo content) - fungerer uansett GitHub Secret Protection-lisens
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          fail: true
+
+      - name: ShellCheck (if any .sh)
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          shopt -s globstar nullglob
+          files=(**/*.sh)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No .sh files found."
+            exit 0
+          fi
+          shellcheck -x "${files[@]}"
+
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-repo-audit
+          path: |
+            **/*.sarif
+            **/*.log
+            **/gitleaks*.json
+            **/gitleaks*.txt
