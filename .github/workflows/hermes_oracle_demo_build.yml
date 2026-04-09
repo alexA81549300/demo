@@ -36,11 +36,34 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3.2.2
 
+      - name: Resolve sdkmanager
+        run: |
+          set -Eeuo pipefail
+          SDK_CANDIDATES=(
+            "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager"
+            "${ANDROID_SDK_ROOT:-}/cmdline-tools/bin/sdkmanager"
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          )
+          SDKMANAGER=""
+          for c in "${SDK_CANDIDATES[@]}"; do
+            if [ -n "$c" ] && [ -x "$c" ]; then
+              SDKMANAGER="$c"
+              break
+            fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+          test -n "$SDKMANAGER"
+          test -x "$SDKMANAGER"
+          printf 'SDKMANAGER=%s\n' "$SDKMANAGER" | tee -a "$GITHUB_ENV"
+
       - name: Install required Android packages
         run: |
           set -Eeuo pipefail
-          yes | sdkmanager --licenses >/dev/null
-          sdkmanager \
+          test -n "${SDKMANAGER:-}"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
