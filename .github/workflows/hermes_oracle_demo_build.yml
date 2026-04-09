@@ -61,19 +61,19 @@ jobs:
       - name: Install required Android packages
         run: |
           set -Eeuo pipefail
-          test -n "${SDKMANAGER:-}"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
           "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0"
 
-      - name: Verify patched provider contract
+      - name: Verify source manifest contract
         run: |
           set -Eeuo pipefail
           test -f app/src/main/AndroidManifest.xml
           grep -q 'rikka.shizuku.ShizukuProvider' app/src/main/AndroidManifest.xml
           grep -q 'android:multiprocess="false"' app/src/main/AndroidManifest.xml
+          grep -q 'tools:node="replace"' app/src/main/AndroidManifest.xml
 
       - name: Write local.properties
         run: |
@@ -85,6 +85,28 @@ jobs:
           set -Eeuo pipefail
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Merged manifest truth gate
+        run: |
+          set -Eeuo pipefail
+          MF="$(find app/build/intermediates -type f \
+            \( -path '*/merged_manifests/*/AndroidManifest.xml' \
+            -o -path '*/merged_manifest/*/AndroidManifest.xml' \
+            -o -path '*/packaged_manifests/*/AndroidManifest.xml' \) \
+            | sort | tail -n 1)"
+          test -n "$MF"
+          test -f "$MF"
+          printf 'MERGED_MANIFEST=%s\n' "$MF" | tee -a "$GITHUB_ENV"
+          grep -q 'rikka.shizuku.ShizukuProvider' "$MF"
+          grep -q 'android:multiprocess="false"' "$MF"
+          ! grep -A6 -B2 'rikka.shizuku.ShizukuProvider' "$MF" | grep -q 'android:multiprocess="true"'
+
+      - name: Upload merged manifest
+        uses: actions/upload-artifact@v6
+        with:
+          name: hermes-oracle-merged-manifest
+          path: ${{ env.MERGED_MANIFEST }}
+          if-no-files-found: error
 
       - name: Upload APK
         uses: actions/upload-artifact@v6
