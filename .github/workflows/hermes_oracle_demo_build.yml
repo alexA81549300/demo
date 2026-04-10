@@ -96,16 +96,21 @@ jobs:
             | sort | tail -n 1)"
           test -n "$MF"
           test -f "$MF"
-          printf 'MERGED_MANIFEST=%s\n' "$MF" | tee -a "$GITHUB_ENV"
-          grep -q 'rikka.shizuku.ShizukuProvider' "$MF"
-          grep -q 'android:multiprocess="false"' "$MF"
-          ! grep -A6 -B2 'rikka.shizuku.ShizukuProvider' "$MF" | grep -q 'android:multiprocess="true"'
+
+          mkdir -p "$GITHUB_WORKSPACE/.hermes_artifacts/merged"
+          cp -f "$MF" "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
+
+          grep -q 'rikka.shizuku.ShizukuProvider' "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
+          grep -q 'android:multiprocess="false"' "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
+          ! grep -A6 -B2 'rikka.shizuku.ShizukuProvider' \
+            "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml" \
+            | grep -q 'android:multiprocess="true"'
 
       - name: Upload merged manifest
         uses: actions/upload-artifact@v6
         with:
           name: hermes-oracle-merged-manifest
-          path: ${{ env.MERGED_MANIFEST }}
+          path: .hermes_artifacts/merged/AndroidManifest.xml
           if-no-files-found: error
 
       - name: Upload APK
@@ -114,4 +119,3 @@ jobs:
           name: hermes-oracle-debug-apk
           path: bridge/shizuku-oracle-app/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
-
