@@ -36,27 +36,43 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3.2.2
 
-      - name: Resolve sdkmanager
+      - name: Resolve sdkmanager and tools
         run: |
           set -Eeuo pipefail
-          SDK_CANDIDATES=(
-            "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager"
-            "${ANDROID_SDK_ROOT:-}/cmdline-tools/bin/sdkmanager"
-            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
-          )
+
           SDKMANAGER=""
-          for c in "${SDK_CANDIDATES[@]}"; do
-            if [ -n "$c" ] && [ -x "$c" ]; then
-              SDKMANAGER="$c"
-              break
-            fi
+          APKANALYZER=""
+          AAPT2=""
+
+          for c in \
+            "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/sdkmanager" \
+            "${ANDROID_SDK_ROOT:-}/cmdline-tools/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          do
+            if [ -n "$c" ] && [ -x "$c" ]; then SDKMANAGER="$c"; break; fi
           done
-          if [ -z "$SDKMANAGER" ]; then
-            SDKMANAGER="$(command -v sdkmanager || true)"
-          fi
+          [ -n "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager || true)"
           test -n "$SDKMANAGER"
           test -x "$SDKMANAGER"
+
+          for c in \
+            "${ANDROID_SDK_ROOT:-}/cmdline-tools/latest/bin/apkanalyzer" \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/apkanalyzer"
+          do
+            if [ -x "$c" ]; then APKANALYZER="$c"; break; fi
+          done
+          [ -n "$APKANALYZER" ] || APKANALYZER="$(command -v apkanalyzer || true)"
+
+          for c in \
+            "${ANDROID_SDK_ROOT:-}/build-tools/34.0.0/aapt2" \
+            "/usr/local/lib/android/sdk/build-tools/34.0.0/aapt2"
+          do
+            if [ -x "$c" ]; then AAPT2="$c"; break; fi
+          done
+
           printf 'SDKMANAGER=%s\n' "$SDKMANAGER" | tee -a "$GITHUB_ENV"
+          printf 'APKANALYZER=%s\n' "$APKANALYZER" | tee -a "$GITHUB_ENV"
+          printf 'AAPT2=%s\n' "$AAPT2" | tee -a "$GITHUB_ENV"
 
       - name: Install required Android packages
         run: |
@@ -86,31 +102,50 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon :app:assembleDebug
 
-      - name: Merged manifest truth gate
+      - name: Collect packaged APK truth
         run: |
           set -Eeuo pipefail
-          MF="$(find app/build/intermediates -type f \
-            \( -path '*/merged_manifests/*/AndroidManifest.xml' \
-            -o -path '*/merged_manifest/*/AndroidManifest.xml' \
-            -o -path '*/packaged_manifests/*/AndroidManifest.xml' \) \
-            | sort | tail -n 1)"
-          test -n "$MF"
-          test -f "$MF"
 
-          mkdir -p "$GITHUB_WORKSPACE/.hermes_artifacts/merged"
-          cp -f "$MF" "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
+          APK="$(find app/build/outputs/apk -type f -name '*.apk' | sort | tail -n 1)"
+          test -n "$APK"
+          test -f "$APK"
 
-          grep -q 'rikka.shizuku.ShizukuProvider' "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
-          grep -q 'android:multiprocess="false"' "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml"
-          ! grep -A6 -B2 'rikka.shizuku.ShizukuProvider' \
-            "$GITHUB_WORKSPACE/.hermes_artifacts/merged/AndroidManifest.xml" \
-            | grep -q 'android:multiprocess="true"'
+          mkdir -p "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth"
 
-      - name: Upload merged manifest
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/apk.sha256"
+
+          if [ -n "${AAPT2:-}" ] && [ -x "${AAPT2:-}" ]; then
+            "$AAPT2" dump xmltree "$APK" AndroidManifest.xml \
+              > "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
+          elif [ -n "${APKANALYZER:-}" ] && [ -x "${APKANALYZER:-}" ]; then
+            "$APKANALYZER" manifest print "$APK" \
+              > "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.print.xml"
+          else
+            echo "No packaged-manifest tool available" >&2
+            exit 1
+          fi
+
+      - name: Packaged APK truth gate
+        run: |
+          set -Eeuo pipefail
+
+          if [ -f "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt" ]; then
+            F="$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
+            grep -q 'rikka.shizuku.ShizukuProvider' "$F"
+            grep -q 'android:multiprocess.*"false"' "$F"
+            ! grep -A12 -B4 'rikka.shizuku.ShizukuProvider' "$F" | grep -q 'android:multiprocess.*"true"'
+          else
+            F="$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.print.xml"
+            grep -q 'rikka.shizuku.ShizukuProvider' "$F"
+            grep -q 'android:multiprocess="false"' "$F"
+            ! grep -A12 -B4 'rikka.shizuku.ShizukuProvider' "$F" | grep -q 'android:multiprocess="true"'
+          fi
+
+      - name: Upload packaged APK truth
         uses: actions/upload-artifact@v6
         with:
-          name: hermes-oracle-merged-manifest
-          path: .hermes_artifacts/merged/AndroidManifest.xml
+          name: hermes-oracle-apk-truth
+          path: .hermes_artifacts/apktruth/*
           if-no-files-found: error
 
       - name: Upload APK
