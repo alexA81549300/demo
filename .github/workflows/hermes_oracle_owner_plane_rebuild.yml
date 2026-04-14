@@ -1,0 +1,245 @@
+name: hermes_oracle_owner_plane_rebuild
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-owner-plane-apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: bridge/shizuku-oracle-app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept licenses and install Android packages
+        run: |
+          set -Eeuo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+
+      - name: Canonize OwnerServer owner-plane body
+        run: |
+          set -Eeuo pipefail
+          cat > app/src/main/java/ai/hermes/oracle/OwnerServer.kt <<'KOTLIN'
+          package ai.hermes.oracle
+
+          import android.content.Context
+          import android.os.Process
+          import android.util.Log
+          import fi.iki.elonen.NanoHTTPD
+
+          class OwnerServer(
+            private val appContext: Context,
+            port: Int
+          ) : NanoHTTPD("127.0.0.1", port) {
+
+            companion object {
+              private const val TAG = "HermesOwnerServer"
+            }
+
+            override fun serve(session: NanoHTTPD.IHTTPSession): NanoHTTPD.Response {
+              val route = (session.uri ?: "").trim()
+              val ports = session.parameters["ports"]?.firstOrNull() ?: ""
+              Log.i(TAG, "serve route=$route ports=$ports")
+
+              return when {
+                route == "/health" -> jsonOk(
+                  "health",
+                  """{"ok":true,"service":"ai.hermes.oracle","resolver":"shizuku_reflection_v1","route":"/health","ts":${System.currentTimeMillis()}}"""
+                )
+
+                route == "/owner" || route == "/owner/" || route.startsWith("/owner") -> jsonOk(
+                  "owner",
+                  ownerJson(ports)
+                )
+
+                route == "/routes" -> jsonOk(
+                  "routes",
+                  """{"ok":true,"routes":["/health","/owner","/routes"],"service":"ai.hermes.oracle"}"""
+                )
+
+                else -> jsonNotFound(route)
+              }
+            }
+
+            private fun ownerJson(ports: String): String = buildString {
+              append("{")
+              append("\"ok\":true,")
+              append("\"resolver\":\"shizuku_reflection_v1\",")
+              append("\"mode\":\"service_self_probe\",")
+              append("\"route\":\"/owner\",")
+              append("\"requested_ports\":\"").append(jsonEscape(ports)).append("\",")
+              append("\"package_name\":\"").append(jsonEscape(appContext.packageName)).append("\",")
+              append("\"uid\":").append(Process.myUid()).append(",")
+              append("\"pid\":").append(Process.myPid()).append(",")
+              append("\"known_routes\":[\"/health\",\"/owner\",\"/routes\"]")
+              append("}")
+            }
+
+            private fun jsonOk(route: String, body: String): NanoHTTPD.Response {
+              val r = NanoHTTPD.newFixedLengthResponse(
+                NanoHTTPD.Response.Status.OK,
+                "application/json",
+                body
+              )
+              r.addHeader("X-Hermes-Route", route)
+              return r
+            }
+
+            private fun jsonNotFound(route: String): NanoHTTPD.Response {
+              val r = NanoHTTPD.newFixedLengthResponse(
+                NanoHTTPD.Response.Status.NOT_FOUND,
+                "application/json",
+                """{"ok":false,"route":"${jsonEscape(route)}","known_routes":["/health","/owner","/routes"]}"""
+              )
+              r.addHeader("X-Hermes-Route", "not_found")
+              return r
+            }
+
+            private fun jsonEscape(s: String): String = buildString {
+              for (ch in s) {
+                when (ch) {
+                  '\\' -> append("\\\\")
+                  '"' -> append("\\\"")
+                  '\n' -> append("\\n")
+                  '\r' -> append("\\r")
+                  '\t' -> append("\\t")
+                  else -> append(ch)
+                }
+              }
+            }
+          }
+          KOTLIN
+
+      - name: Canonize manifest for special-use foreground service
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          p = Path('app/src/main/AndroidManifest.xml')
+          text = p.read_text(encoding='utf-8')
+          if 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' not in text:
+              text = text.replace(
+                  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+                  '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n\n  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />'
+              )
+          svc_pat = re.compile(r'(<service\s+[^>]*android:name="\.OracleForegroundService"[^>]*)(/?>)', re.S)
+          m = svc_pat.search(text)
+          if not m:
+              raise SystemExit('OracleForegroundService ikke funnet i manifest')
+          start, end = m.span()
+          service_tag = text[start:end]
+          if 'android:foregroundServiceType=' not in service_tag:
+              service_tag = service_tag.replace(
+                  'android:exported="false"',
+                  'android:exported="false"\n        android:foregroundServiceType="specialUse"'
+              )
+          if service_tag.endswith('/>'):
+              service_tag = service_tag[:-2] + '>\n' \
+                  '      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n' \
+                  '          android:value="local_owner_probe_shizuku_oracle" />\n' \
+                  '    </service>'
+              text = text[:start] + service_tag + text[end:]
+          else:
+              close_idx = text.find('</service>', end)
+              if close_idx == -1:
+                  raise SystemExit('Fant ikke </service> for OracleForegroundService')
+              full_block = text[start:close_idx+10]
+              if 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' not in full_block:
+                  full_block = full_block.replace(
+                      '</service>',
+                      '      <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"\n'
+                      '          android:value="local_owner_probe_shizuku_oracle" />\n'
+                      '    </service>'
+                  )
+                  text = text[:start] + full_block + text[close_idx+10:]
+              else:
+                  text = text[:start] + service_tag + text[end:]
+          p.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Write local.properties
+        run: |
+          set -Eeuo pipefail
+          printf 'sdk.dir=%s\n' "$ANDROID_SDK_ROOT" > local.properties
+
+      - name: Build debug APK
+        run: |
+          set -Eeuo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:assembleDebug
+
+      - name: Collect APK owner-plane truth
+        run: |
+          set -Eeuo pipefail
+          APK="$(find app/build/outputs/apk -type f -name '*.apk' | sort | tail -n 1)"
+          test -n "$APK"
+          test -f "$APK"
+          mkdir -p "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth"
+          sha256sum "$APK" | tee "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/apk.sha256"
+          python3 - "$APK" <<'PY'
+          from pathlib import Path
+          import json, sys, zipfile
+          apk = Path(sys.argv[1])
+          required = {
+              'route_owner': b'/owner',
+              'route_routes': b'/routes',
+              'known_routes': b'known_routes',
+              'x_hermes_route': b'X-Hermes-Route',
+              'resolver': b'shizuku_reflection_v1',
+              'hermesownerserver': b'HermesOwnerServer',
+          }
+          found = {k: False for k in required}
+          hits = []
+          with zipfile.ZipFile(apk, 'r') as zf:
+              for name in zf.namelist():
+                  if not (name.startswith('classes') and name.endswith('.dex')):
+                      continue
+                  data = zf.read(name)
+                  for k, needle in required.items():
+                      if needle in data:
+                          found[k] = True
+                          hits.append(f'{name}:{k}')
+          out = {
+              'apk': str(apk),
+              'found': found,
+              'hits': hits,
+          }
+          truth = Path('.hermes_artifacts/apktruth/owner_plane_truth.json')
+          truth.write_text(json.dumps(out, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+          missing = [k for k, v in found.items() if not v]
+          if missing:
+              raise SystemExit('mangler packaged markers: ' + ', '.join(missing))
+          PY
+
+      - name: Upload APK truth
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-oracle-owner-plane-truth
+          path: .hermes_artifacts/apktruth/*
+          if-no-files-found: error
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-oracle-owner-plane-apk
+          path: bridge/shizuku-oracle-app/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
