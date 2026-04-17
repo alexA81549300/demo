@@ -114,12 +114,12 @@ jobs:
 
           sha256sum "$APK" | tee "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/apk.sha256"
 
-          if [ -n "${AAPT2:-}" ] && [ -x "${AAPT2:-}" ]; then
-            "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" \
-              > "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
-          elif [ -n "${APKANALYZER:-}" ] && [ -x "${APKANALYZER:-}" ]; then
+          if [ -n "${APKANALYZER:-}" ] && [ -x "${APKANALYZER:-}" ]; then
             "$APKANALYZER" manifest print "$APK" \
               > "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.print.xml"
+          elif [ -n "${AAPT2:-}" ] && [ -x "${AAPT2:-}" ]; then
+            "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" \
+              > "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
           else
             echo "No packaged-manifest tool available" >&2
             exit 1
@@ -129,16 +129,16 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          if [ -f "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt" ]; then
-            F="$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
-            grep -q 'rikka.shizuku.ShizukuProvider' "$F"
-            grep -q 'android:multiprocess.*"false"' "$F"
-            ! grep -A12 -B4 'rikka.shizuku.ShizukuProvider' "$F" | grep -q 'android:multiprocess.*"true"'
-          else
+          if [ -f "$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.print.xml" ]; then
             F="$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.print.xml"
             grep -q 'rikka.shizuku.ShizukuProvider' "$F"
             grep -q 'android:multiprocess="false"' "$F"
             ! grep -A12 -B4 'rikka.shizuku.ShizukuProvider' "$F" | grep -q 'android:multiprocess="true"'
+          else
+            F="$GITHUB_WORKSPACE/.hermes_artifacts/apktruth/AndroidManifest.xmltree.txt"
+            grep -q 'rikka.shizuku.ShizukuProvider' "$F"
+            grep -q 'android:multiprocess' "$F"
+            ! grep -A12 -B4 'rikka.shizuku.ShizukuProvider' "$F" | grep -q 'android:multiprocess.*0xffffffff'
           fi
 
       - name: Upload packaged APK truth
