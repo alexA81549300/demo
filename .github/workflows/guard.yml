@@ -1,5 +1,10 @@
+# HERMES_CI_CLASS=AUTO_GATED
 name: guard
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 jobs:
   block-direct-push:
